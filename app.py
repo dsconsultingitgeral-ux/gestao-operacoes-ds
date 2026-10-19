@@ -498,71 +498,130 @@ else:
         # --- ADMIN TAB 3: GESTÃO DE FÉRIAS E MAPA MENSAL ---
         with tabs[2]:
             st.markdown("### Aprovação e Gestão de Pedidos de Férias")
+            ferias_list = []
             try:
                 res_ferias_all = supabase.table("ferias").select("*").execute()
                 ferias_list = res_ferias_all.data if res_ferias_all.data else []
 
-                pendentes = [f for f in ferias_list if f.get("estado", "Pendente") == "Pendente"]
-                outros = [f for f in ferias_list if f.get("estado", "Pendente") != "Pendente"]
+                if ferias_list:
+                    df_ferias = pd.DataFrame(ferias_list)
+                    if "estado" not in df_ferias.columns:
+                        df_ferias["estado"] = "Pendente"
+                    df_ferias["estado"] = df_ferias["estado"].fillna("Pendente").astype(str).str.strip()
+                    df_ferias["username"] = df_ferias["username"].fillna("Desconhecido").astype(str)
+                    df_ferias["data_inicio_dt"] = pd.to_datetime(df_ferias.get("data_inicio"), errors="coerce").dt.date
 
-                if pendentes:
-                    st.markdown("#### 🟡 Pedidos Pendentes de Aprovação")
-                    for f in pendentes:
-                        f_id = f.get("id")
-                        f_user = f.get("username", "Desconhecido")
-                        f_tipo = f.get("tipo", "Férias")
-                        f_ini = f.get("data_inicio")
-                        f_fim = f.get("data_fim")
-                        f_obs = f.get("observacoes", "") or "Sem notas"
+                    # Indicadores reais
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Pendentes", int((df_ferias["estado"].str.casefold() == "pendente").sum()))
+                    c2.metric("Aprovados", int((df_ferias["estado"].str.casefold() == "aprovado").sum()))
+                    c3.metric("Rejeitados", int((df_ferias["estado"].str.casefold() == "rejeitado").sum()))
+                    c4.metric("Apagados", int((df_ferias["estado"].str.casefold() == "apagado").sum()))
 
-                        st.markdown(f"""
-                            <div class="card-pendente">
-                                <b>Colaborador:</b> <code>{f_user}</code> | <b>Tipo:</b> {f_tipo}<br>
-                                <b>Período:</b> {f_ini} até {f_fim}<br>
-                                <i>Nota: {f_obs}</i>
-                            </div>
-                        """, unsafe_allow_html=True)
+                    st.markdown("#### Filtrar pedidos")
+                    f1, f2, f3 = st.columns(3)
+                    estados_existentes = sorted([x for x in df_ferias["estado"].dropna().unique().tolist() if x])
+                    estados_base = ["Pendente", "Aprovado", "Rejeitado", "Apagado"]
+                    estados_opcoes = ["Todos"] + estados_base + [
+                        x for x in estados_existentes
+                        if x.casefold() not in {e.casefold() for e in estados_base}
+                    ]
+                    with f1:
+                        estado_ferias_filtro = st.selectbox(
+                            "Estado do pedido", estados_opcoes, index=0, key="adm_ferias_estado_filtro"
+                        )
+                    with f2:
+                        utilizadores_ferias = sorted(df_ferias["username"].dropna().unique().tolist())
+                        colaborador_ferias_filtro = st.selectbox(
+                            "Colaborador", ["Todos"] + utilizadores_ferias, index=0, key="adm_ferias_user_filtro"
+                        )
+                    with f3:
+                        periodo_ferias_filtro = st.selectbox(
+                            "Período de início", ["Este mês", "Mês anterior", "Todo o histórico"],
+                            index=2, key="adm_ferias_periodo_filtro"
+                        )
 
-                        c_f1, c_f2, c_f3 = st.columns(3)
-                        with c_f1:
-                            if st.button(f"Aprovar #{f_id}", key=f"adm_ap_{f_id}"):
-                                supabase.table("ferias").update({"estado": "Aprovado"}).eq("id", f_id).execute()
-                                st.success("Aprovado!")
-                                st.rerun()
-                        with c_f2:
-                            if st.button(f"Rejeitar #{f_id}", key=f"adm_rej_{f_id}"):
-                                supabase.table("ferias").update({"estado": "Rejeitado"}).eq("id", f_id).execute()
-                                st.warning("Rejeitado!")
-                                st.rerun()
-                        with c_f3:
-                            if st.button(f"Apagar #{f_id}", key=f"adm_del_{f_id}"):
-                                supabase.table("ferias").delete().eq("id", f_id).execute()
-                                st.rerun()
-                        st.markdown("---")
+                    df_ferias_filtrado = df_ferias.copy()
+                    if estado_ferias_filtro != "Todos":
+                        df_ferias_filtrado = df_ferias_filtrado[
+                            df_ferias_filtrado["estado"].str.casefold() == estado_ferias_filtro.casefold()
+                        ]
+                    if colaborador_ferias_filtro != "Todos":
+                        df_ferias_filtrado = df_ferias_filtrado[
+                            df_ferias_filtrado["username"] == colaborador_ferias_filtro
+                        ]
 
-                if outros:
-                    st.markdown("#### 📋 Histórico de Pedidos Processados")
-                    for f in outros:
-                        f_id = f.get("id")
-                        f_user = f.get("username", "Desconhecido")
-                        f_tipo = f.get("tipo", "Férias")
-                        f_est = f.get("estado", "Aprovado")
-                        f_ini = f.get("data_inicio")
-                        f_fim = f.get("data_fim")
-                        css_class = "card-aprovado" if f_est == "Aprovado" else "card-rejeitado"
+                    hoje_ferias = date.today()
+                    primeiro_mes_ferias = hoje_ferias.replace(day=1)
+                    if periodo_ferias_filtro == "Este mês":
+                        df_ferias_filtrado = df_ferias_filtrado[
+                            df_ferias_filtrado["data_inicio_dt"].apply(
+                                lambda d: pd.notna(d) and primeiro_mes_ferias <= d <= hoje_ferias
+                            )
+                        ]
+                    elif periodo_ferias_filtro == "Mês anterior":
+                        ultimo_mes_anterior = primeiro_mes_ferias - timedelta(days=1)
+                        primeiro_mes_anterior = ultimo_mes_anterior.replace(day=1)
+                        df_ferias_filtrado = df_ferias_filtrado[
+                            df_ferias_filtrado["data_inicio_dt"].apply(
+                                lambda d: pd.notna(d) and primeiro_mes_anterior <= d <= ultimo_mes_anterior
+                            )
+                        ]
 
-                        st.markdown(f"""
-                            <div class="{css_class}">
-                                <b>Colaborador:</b> <code>{f_user}</code> | <b>Tipo:</b> {f_tipo} | <b>Estado:</b> {f_est}<br>
-                                <b>Período:</b> {f_ini} até {f_fim}
-                            </div>
-                        """, unsafe_allow_html=True)
+                    st.caption(f"{len(df_ferias_filtrado)} pedido(s) encontrados.")
+                    if df_ferias_filtrado.empty:
+                        st.info("Não existem pedidos para os filtros selecionados.")
+                    else:
+                        for _, f in df_ferias_filtrado.iterrows():
+                            f_id = f.get("id")
+                            f_user = f.get("username", "Desconhecido")
+                            f_tipo = f.get("tipo", "Ausência")
+                            f_est = str(f.get("estado", "Pendente"))
+                            f_ini = f.get("data_inicio", "—")
+                            f_fim = f.get("data_fim", "—")
+                            f_obs = f.get("observacoes", "") or "Sem observações"
+                            if f_est.casefold() == "aprovado":
+                                css_class = "card-aprovado"
+                            elif f_est.casefold() == "rejeitado":
+                                css_class = "card-rejeitado"
+                            elif f_est.casefold() == "apagado":
+                                css_class = "card-box"
+                            else:
+                                css_class = "card-pendente"
 
-                if not ferias_list:
+                            st.markdown(f"""
+                                <div class="{css_class}">
+                                    <b>#{f_id} · Colaborador:</b> <code>{f_user}</code> |
+                                    <b>Tipo:</b> {f_tipo} | <b>Estado:</b> {f_est}<br>
+                                    <b>Período:</b> {f_ini} até {f_fim}<br>
+                                    <i>Observações:</i> {f_obs}
+                                </div>
+                            """, unsafe_allow_html=True)
+
+                            if f_est.casefold() == "pendente":
+                                a1, a2, a3 = st.columns(3)
+                                with a1:
+                                    if st.button("Aprovar", key=f"adm_ap_{f_id}", use_container_width=True):
+                                        supabase.table("ferias").update({"estado": "Aprovado"}).eq("id", f_id).execute()
+                                        st.success(f"Pedido #{f_id} aprovado.")
+                                        st.rerun()
+                                with a2:
+                                    if st.button("Rejeitar", key=f"adm_rej_{f_id}", use_container_width=True):
+                                        supabase.table("ferias").update({"estado": "Rejeitado"}).eq("id", f_id).execute()
+                                        st.warning(f"Pedido #{f_id} rejeitado.")
+                                        st.rerun()
+                                with a3:
+                                    if st.button("Marcar como apagado", key=f"adm_del_{f_id}", use_container_width=True):
+                                        # Apagamento lógico: mantém histórico para consulta e filtros.
+                                        supabase.table("ferias").update({"estado": "Apagado"}).eq("id", f_id).execute()
+                                        st.info(f"Pedido #{f_id} marcado como apagado.")
+                                        st.rerun()
+                            st.markdown("---")
+                else:
                     st.info("Não existem pedidos de férias registados.")
-
             except Exception as e:
                 st.error(f"Erro ao carregar pedidos de férias: {e}")
+
 
             st.markdown("---")
             try:
