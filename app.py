@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Estilização CSS minimalista e moderna com realce de cores
+# Estilização CSS minimalista e moderna
 st.markdown("""
     <style>
     .main {
@@ -137,7 +137,7 @@ else:
     hoje_iso = date.today().isoformat()
 
     # =========================================================================
-    # FUNÇÃO AUXILIAR: GERAR GRELHA / CALENDÁRIO MENSAL DE AUSÊNCIAS
+    # FUNÇÃO AUXILIAR: CALENDÁRIO / GRELHA MENSAL DE AUSÊNCIAS
     # =========================================================================
     def render_calendario_ausencias(res_ferias):
         st.markdown("#### 📅 Calendário / Grelha Mensal de Ausências")
@@ -246,7 +246,7 @@ else:
             except Exception as e:
                 st.error(f"Erro ao carregar picagens: {e}")
 
-        # --- TAB 2: PROJETOS & HORAS ---
+        # --- TAB 2: PROJETOS & HORAS (USANDO AS COLUNAS REAIS DA BD) ---
         with tabs[1]:
             st.markdown("### Registo de Horas em Projetos")
             try:
@@ -255,33 +255,33 @@ else:
             except Exception:
                 projetos = []
 
-            if not projetos:
-                st.info("Não existem projetos disponíveis de momento.")
-            else:
-                options_proj = {p.get("nome_projeto", f"Projeto {p.get('id')}"): p.get("id") for p in projetos}
+            lista_nomes_projetos = [p.get("nome_projeto") for p in projetos if p.get("nome_projeto")]
+            if not lista_nomes_projetos:
+                lista_nomes_projetos = ["Suporte Técnico Mensal", "Redesenho Website DS", "Desenvolvimento App Gestão"]
+
+            with st.form("form_horas"):
+                proj_nome = st.selectbox("Selecione o Projeto", lista_nomes_projetos)
+                horas = st.number_input("Horas Dedicadas", min_value=0.5, max_value=24.0, value=8.0, step=0.5)
+                notas = st.text_area("Notas / Descrição do Trabalho Efetuado")
                 
-                with st.form("form_horas"):
-                    proj_nome = st.selectbox("Selecione o Projeto", list(options_proj.keys()))
-                    horas = st.number_input("Horas Dedicadas", min_value=0.5, max_value=24.0, value=8.0, step=0.5)
-                    descricao = st.text_area("Notas / Descrição do Trabalho Efetuado")
-                    
-                    if st.form_submit_button("Registar Horas"):
-                        if not descricao:
-                            st.warning("Insira uma nota sobre o trabalho efetuado.")
-                        else:
-                            data_h = {
-                                "projeto_id": options_proj[proj_nome],
-                                "username": st.session_state.username,
-                                "data": hoje_iso,
-                                "horas_dedicadas": horas,
-                                "descricao": descricao
-                            }
-                            try:
-                                supabase.table("projetos_horas").insert(data_h).execute()
-                                st.success("Horas registadas com sucesso!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Erro ao registar horas: {e}")
+                if st.form_submit_button("Registar Horas"):
+                    if not notas:
+                        st.warning("Insira uma nota sobre o trabalho efetuado.")
+                    else:
+                        # Mapeamento direto com as colunas reais vistas na imagem:
+                        data_h = {
+                            "username": st.session_state.username,
+                            "projeto": proj_nome,
+                            "horas": horas,
+                            "notas": notas,
+                            "data_registo": hoje_iso
+                        }
+                        try:
+                            supabase.table("projetos_horas").insert(data_h).execute()
+                            st.success("Horas registadas com sucesso!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao registar horas: {e}")
 
             st.markdown("---")
             st.markdown("### Os Seus Registos Recentes")
@@ -345,62 +345,79 @@ else:
         # --- ADMIN TAB 1: GESTÃO DE PICAGENS ---
         with tabs[0]:
             st.markdown("### Painel de Supervisão e Edição de Picagens")
-            st.markdown("Aqui pode visualizar e corrigir os registos de ponto de todos os colaboradores.")
+            st.info("Pode editar as picagens dos colaboradores e clicar em 'Guardar Alterações' no final do formulário.")
             
             try:
-                res_all_p = supabase.table("picagens").select("*").order("data_hora", desc=True).limit(50).execute()
-                if res_all_p.data:
-                    for p in res_all_p.data:
-                        p_id = p.get("id")
-                        p_user = p.get("username")
-                        p_tipo = p.get("tipo")
-                        p_dh = p.get("data_hora")
+                res_all_p = supabase.table("picagens").select("*").order("data_hora", desc=True).limit(30).execute()
+                picagens_data = res_all_p.data if res_all_p.data else []
 
-                        cols_ed = st.columns([2, 2, 2, 1])
-                        with cols_ed[0]:
-                            st.write(f"**Colab:** `{p_user}`")
-                        with cols_ed[1]:
-                            novo_tipo = st.selectbox("Tipo", ["entrada", "saida"], index=0 if p_tipo=="entrada" else 1, key=f"pt_tipo_{p_id}")
-                        with cols_ed[2]:
-                            nova_datahora = st.text_input("Data/Hora (ISO)", value=p_dh, key=f"pt_dh_{p_id}")
-                        with cols_ed[3]:
-                            st.write("")
-                            if st.button("Guardar", key=f"btn_save_p_{p_id}"):
-                                supabase.table("picagens").update({"tipo": novo_tipo, "data_hora": nova_datahora}).eq("id", p_id).execute()
-                                st.success("Atualizado!")
-                                st.rerun()
-                        st.markdown("---")
+                if picagens_data:
+                    with st.form("form_edit_picagens"):
+                        novas_picagens = {}
+                        for p in picagens_data:
+                            p_id = p.get("id")
+                            p_user = p.get("username")
+                            p_tipo = p.get("tipo")
+                            p_dh = p.get("data_hora")
+
+                            cols_ed = st.columns([2, 2, 3])
+                            with cols_ed[0]:
+                                st.write(f"**Colaborador:** `{p_user}`")
+                            with cols_ed[1]:
+                                t_sel = st.selectbox(f"Tipo (#{p_id})", ["entrada", "saida"], index=0 if p_tipo=="entrada" else 1, key=f"pt_tipo_{p_id}")
+                            with cols_ed[2]:
+                                dh_val = st.text_input(f"Data/Hora ISO (#{p_id})", value=str(p_dh), key=f"pt_dh_{p_id}")
+
+                            novas_picagens[p_id] = {"tipo": t_sel, "data_hora": dh_val}
+                            st.markdown("---")
+
+                        if st.form_submit_button("💾 Guardar Alterações nas Picagens"):
+                            for pid, pdata in novas_picagens.items():
+                                supabase.table("picagens").update(pdata).eq("id", pid).execute()
+                            st.success("Picagens atualizadas com sucesso!")
+                            st.rerun()
                 else:
                     st.info("Não existem picagens registadas.")
             except Exception as e:
-                st.error(f"Erro ao carregar picagens globais: {e}")
+                st.error(f"Erro ao carregar picagens: {e}")
 
         # --- ADMIN TAB 2: GESTÃO DE PROJETOS E HORAS ---
         with tabs[1]:
             st.markdown("### Supervisão e Edição de Horas em Projetos")
-            try:
-                res_all_h = supabase.table("projetos_horas").select("*").limit(50).execute()
-                if res_all_h.data:
-                    for h in res_all_h.data:
-                        h_id = h.get("id")
-                        h_user = h.get("username", "Colaborador")
-                        h_horas = h.get("horas_dedicadas", 8.0) or 8.0
-                        h_desc = h.get("descricao", "") or ""
+            st.info("Ajuste os valores necessários e clique em 'Guardar Alterações em Horas' para gravar na BD.")
 
-                        cols_h = st.columns([2, 1, 3, 1])
-                        with cols_h[0]:
-                            st.write(f"**`{h_user}`**")
-                        with cols_h[1]:
-                            novas_horas = st.number_input("Horas", value=float(h_horas), step=0.5, key=f"h_val_{h_id}")
-                        with cols_h[2]:
-                            nova_desc = st.text_input("Notas", value=h_desc, key=f"h_desc_{h_id}")
-                        with cols_h[3]:
-                            st.write("")
-                            if st.button("Atualizar", key=f"btn_h_{h_id}"):
-                                supabase.table("projetos_horas").update({"horas_dedicadas": novas_horas, "descricao": nova_desc}).eq("id", h_id).execute()
-                                st.success("Atualizado!")
-                                st.rerun()
-                        st.markdown("---")
+            try:
+                res_all_h = supabase.table("projetos_horas").select("*").limit(30).execute()
+                horas_data = res_all_h.data if res_all_h.data else []
+
+                if horas_data:
+                    with st.form("form_edit_horas"):
+                        novas_horas_dict = {}
+                        for h in horas_data:
+                            h_id = h.get("id")
+                            h_user = h.get("username", "Colaborador")
+                            h_proj = h.get("projeto", "") or "Geral"
+                            h_val = h.get("horas", 8.0) or 8.0
+                            h_not = h.get("notas", "") or ""
+
+                            cols_h = st.columns([2, 2, 1, 3])
+                            with cols_h[0]:
+                                st.write(f"**`{h_user}`**")
+                            with cols_h[1]:
+                                st.write(f"Projeto: **{h_proj}**")
+                            with cols_h[2]:
+                                v_h = st.number_input(f"Horas (#{h_id})", value=float(h_val), step=0.5, key=f"h_val_{h_id}")
+                            with cols_h[3]:
+                                n_h = st.text_input(f"Notas (#{h_id})", value=str(h_not), key=f"h_desc_{h_id}")
+
+                            novas_horas_dict[h_id] = {"horas": v_h, "notas": n_h}
+                            st.markdown("---")
+
+                        if st.form_submit_button("💾 Guardar Alterações em Horas"):
+                            for hid, hdata in novas_horas_dict.items():
+                                supabase.table("projetos_horas").update(hdata).eq("id", hid).execute()
+                            st.success("Horas atualizadas com sucesso!")
+                            st.rerun()
                 else:
                     st.info("Sem registos de horas.")
             except Exception as e:
@@ -408,17 +425,16 @@ else:
 
         # --- ADMIN TAB 3: GESTÃO DE FÉRIAS E MAPA MENSAL ---
         with tabs[2]:
-            st.markdown("### Aprovação e Edição de Pedidos de Férias")
+            st.markdown("### Aprovação e Gestão de Pedidos de Férias")
             try:
                 res_ferias_all = supabase.table("ferias").select("*").execute()
                 ferias_list = res_ferias_all.data if res_ferias_all.data else []
 
-                # Separar pendentes
                 pendentes = [f for f in ferias_list if f.get("estado", "Pendente") == "Pendente"]
                 outros = [f for f in ferias_list if f.get("estado", "Pendente") != "Pendente"]
 
                 if pendentes:
-                    st.markdown("#### 🟡 Pedidos A Aguardar A Tua Aprovação")
+                    st.markdown("#### 🟡 Pedidos Pendentes de Aprovação")
                     for f in pendentes:
                         f_id = f.get("id")
                         f_user = f.get("username", "Desconhecido")
@@ -439,7 +455,7 @@ else:
                         with c_f1:
                             if st.button(f"Aprovar #{f_id}", key=f"adm_ap_{f_id}"):
                                 supabase.table("ferias").update({"estado": "Aprovado"}).eq("id", f_id).execute()
-                                st.success("Aprovado com sucesso!")
+                                st.success("Aprovado!")
                                 st.rerun()
                         with c_f2:
                             if st.button(f"Rejeitar #{f_id}", key=f"adm_rej_{f_id}"):
@@ -453,7 +469,7 @@ else:
                         st.markdown("---")
 
                 if outros:
-                    st.markdown("#### 📋 Pedidos Já Processados")
+                    st.markdown("#### 📋 Histórico de Pedidos Processados")
                     for f in outros:
                         f_id = f.get("id")
                         f_user = f.get("username", "Desconhecido")
@@ -469,7 +485,6 @@ else:
                                 <b>Período:</b> {f_ini} até {f_fim}
                             </div>
                         """, unsafe_allow_html=True)
-                        st.markdown("---")
 
                 if not ferias_list:
                     st.info("Não existem pedidos de férias registados.")
@@ -478,7 +493,6 @@ else:
                 st.error(f"Erro ao carregar pedidos de férias: {e}")
 
             st.markdown("---")
-            # Renderizar o calendário/grelha mensal para o Admin
             try:
                 render_calendario_ausencias(ferias_list)
             except Exception as e:
