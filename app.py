@@ -88,7 +88,6 @@ if not st.session_state.logged_in:
                         st.session_state.logged_in = True
                         st.session_state.username = user["username"]
                         st.session_state.nome = user["nome"]
-                        # Identifica se é admin se o username contiver 'admin'
                         st.session_state.is_admin = "admin" in user["username"].lower()
                         st.rerun()
                     else:
@@ -113,7 +112,7 @@ else:
     hoje_iso = date.today().isoformat()
 
     # =========================================================================
-    # VISÃO DO COLABORADOR (Username começa por "col_")
+    # VISÃO DO COLABORADOR
     # =========================================================================
     if not st.session_state.is_admin:
         tabs = st.tabs(["🕒 Picagem de Ponto", "📁 Projetos & Horas", "🏖️ Férias e Ausências"])
@@ -275,7 +274,7 @@ else:
                 st.error(f"Erro ao carregar férias: {e}")
 
     # =========================================================================
-    # VISÃO DO ADMINISTRADOR (Username contém "admin")
+    # VISÃO DO ADMINISTRADOR
     # =========================================================================
     else:
         tabs = st.tabs(["🕒 Gestão de Picagens", "📁 Gestão de Projetos & Horas", "🏖️ Gestão & Mapa de Férias"])
@@ -373,4 +372,17 @@ else:
                             if st.button(f"Apagar #{f_id}", key=f"adm_del_{f_id}"):
                                 supabase.table("ferias").delete().eq("id", f_id).execute()
                                 st.rerun()
-                        st.markdown("---
+                        st.markdown("---")
+                else:
+                    st.info("Não existem pedidos de férias.")
+            except Exception as e:
+                st.error(f"Erro ao carregar pedidos de férias: {e}")
+
+            st.markdown("### 📊 Mapa Mensal de Ausências da Equipa")
+            try:
+                if res_ferias_all.data:
+                    df_f = pd.DataFrame(res_ferias_all.data)
+                    if not df_f.empty:
+                        st.dataframe(df_f[["username", "tipo", "data_inicio", "data_fim", "dias_uteis", "estado", "observacoes"]], use_container_width=True)
+            except Exception as e:
+                st.error(f"Erro ao gerar mapa mensal: {e}")
