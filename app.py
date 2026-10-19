@@ -84,7 +84,6 @@ if not st.session_state.logged_in:
                 
                 if users and users[0]["password"] == password_input:
                     user = users[0]
-                    # Validar permissão para a plataforma 'gestao' ou 'ambas'
                     if user.get("plataforma") in ["gestao", "ambas"]:
                         st.session_state.logged_in = True
                         st.session_state.username = user["username"]
@@ -99,7 +98,6 @@ if not st.session_state.logged_in:
                 st.error(f"Erro no login: {e}")
 
 else:
-    # --- CABEÇALHO COM BOTÃO DE SAIR / TERMINAR SESSÃO ---
     c_user, c_logout = st.columns([3, 1])
     with c_user:
         st.markdown(f"👋 **Bem-vindo(a), {st.session_state.nome}**")
@@ -110,29 +108,23 @@ else:
 
     st.markdown("---")
 
-    # --- SEPARADORES PRINCIPAIS DA APLICAÇÃO ---
     tabs = st.tabs(["🕒 Picagem de Ponto", "📁 Projetos & Horas", "🏖️ Férias e Ausências", "👑 Painel Admin"] if st.session_state.is_admin else ["🕒 Picagem de Ponto", "📁 Projetos & Horas", "🏖️ Férias e Ausências"])
 
     hoje_str = date.today().isoformat()
 
-    # ==========================================
-    # TAB 1: PICAGEM DE PONTO
-    # ==========================================
+    # --- TAB 1: PICAGEM DE PONTO ---
     with tabs[0]:
         st.markdown("### Picagem de Ponto Diária")
         st.write(f"**Data:** {date.today().strftime('%d/%m/%Y')}")
 
-        # Buscar registo do dia atual para o utilizador
         try:
             res_ponto = supabase.table("picagens").select("*").eq("username", st.session_state.username).eq("data", hoje_str).execute()
             registo = res_ponto.data[0] if res_ponto.data else None
-        except Exception as e:
+        except Exception:
             registo = None
-            st.error(f"Erro ao carregar picagens: {e}")
 
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
         
-        # Botões de marcação de ponto
         with col_p1:
             if st.button("Entrada 🟢", disabled=bool(registo and registo.get("hora_entrada"))):
                 now_time = datetime.now().strftime("%H:%M:%S")
@@ -160,7 +152,6 @@ else:
                 supabase.table("picagens").update({"hora_saida": now_time}).eq("id", registo["id"]).execute()
                 st.rerun()
 
-        # Mostrar Estado Atual do Dia
         st.markdown("<br>", unsafe_allow_html=True)
         if registo:
             h_ent = registo.get('hora_entrada') or '--:--'
@@ -168,31 +159,25 @@ else:
             h_e_alm = registo.get('hora_entrada_almoco') or '--:--'
             h_sai = registo.get('hora_saida') or '--:--'
 
-            html_ponto = f"""
+            st.markdown(f"""
                 <div class="card-box">
                     <b>Entrada:</b> {h_ent} | 
                     <b>Saída Almoço:</b> {h_s_alm} | 
                     <b>Entrada Almoço:</b> {h_e_alm} | 
                     <b>Saída:</b> {h_sai}
                 </div>
-            """
-            st.markdown(html_ponto, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
         else:
             st.info("Ainda não registou entrada hoje.")
 
-    # ==========================================
-    # TAB 2: PROJETOS E HORAS
-    # ==========================================
+    # --- TAB 2: PROJETOS E HORAS ---
     with tabs[1]:
         st.markdown("### Registo de Horas em Projetos")
-        
         try:
-            # Buscar projetos ativos
             res_proj = supabase.table("projetos").select("*").eq("estado", "Ativo").execute()
             projetos = res_proj.data
-        except Exception as e:
+        except Exception:
             projetos = []
-            st.error(f"Erro ao carregar projetos: {e}")
 
         if not projetos:
             st.info("Não existem projetos ativos disponíveis de momento.")
@@ -204,8 +189,7 @@ else:
                 horas = st.number_input("Horas Dedicadas", min_value=0.5, max_value=24.0, step=0.5)
                 descricao = st.text_area("Descrição do Trabalho Efetuado")
                 
-                sub_horas = st.form_submit_button("Registar Horas")
-                if sub_horas:
+                if st.form_submit_button("Registar Horas"):
                     if not descricao:
                         st.warning("Descreva o trabalho efetuado.")
                     else:
@@ -231,9 +215,7 @@ else:
         except Exception as e:
             st.error(f"Erro ao carregar registos recentes: {e}")
 
-    # ==========================================
-    # TAB 3: FÉRIAS E AUSÊNCIAS
-    # ==========================================
+    # --- TAB 3: FÉRIAS E AUSÊNCIAS ---
     with tabs[2]:
         st.markdown("### Marcar Férias ou Ausência")
         
@@ -246,9 +228,8 @@ else:
                 dt_fim = st.date_input("Data de Fim", min_value=date.today())
             
             obs = st.text_input("Observações (Opcional)")
-            sub_ferias = st.form_submit_button("Submeter Pedido")
             
-            if sub_ferias:
+            if st.form_submit_button("Submeter Pedido"):
                 if dt_fim < dt_ini:
                     st.error("A data de fim não pode ser anterior à data de início.")
                 else:
@@ -280,20 +261,17 @@ else:
                     f_obs = f.get('observacoes', '') or ''
                     cor_est = "🟡" if f_est == "Pendente" else ("🟢" if f_est == "Aprovado" else "🔴")
 
-                    html_ferias = f"""
+                    st.markdown(f"""
                         <div class="card-box">
                             <b>Tipo:</b> {f_tipo} | <b>De:</b> {f_ini} <b>Até:</b> {f_fim} ({f_dias} dias)<br>
                             <b>Estado:</b> {cor_est} {f_est} <br>
                             <small><i>{f_obs}</i></small>
                         </div>
-                    """
-                    st.markdown(html_ferias, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
         except Exception as e:
             st.error(f"Erro ao carregar histórico de férias: {e}")
 
-    # ==========================================
-    # TAB 4: PAINEL ADMIN (APENAS PARA ADMINS)
-    # ==========================================
+    # --- TAB 4: PAINEL ADMIN ---
     if st.session_state.is_admin:
         with tabs[3]:
             st.markdown("### Painel Geral de Administração")
@@ -313,13 +291,36 @@ else:
                         fp_fim = fp.get('data_fim', '')
                         fp_dias = fp.get('dias_uteis', '')
 
-                        html_pend = f"""
+                        st.markdown(f"""
                             <div class="card-box">
                                 <b>Colaborador:</b> {fp_user} | <b>Tipo:</b> {fp_tipo}<br>
                                 <b>Período:</b> {fp_ini} a {fp_fim} ({fp_dias} dias)
                             </div>
-                        """
-                        st.markdown(html_pend, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
+                        
                         col_ap1, col_ap2 = st.columns(2)
                         with col_ap1:
-                            if st.button(f"Aprovar #{fp_id}", key
+                            if st.button(f"Aprovar #{fp_id}", key=f"ap_{fp_id}"):
+                                supabase.table("ferias").update({"estado": "Aprovado"}).eq("id", fp_id).execute()
+                                st.success("Pedido aprovado!")
+                                st.rerun()
+                        with col_ap2:
+                            if st.button(f"Rejeitar #{fp_id}", key=f"rej_{fp_id}"):
+                                supabase.table("ferias").update({"estado": "Rejeitado"}).eq("id", fp_id).execute()
+                                st.warning("Pedido rejeitado.")
+                                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao carregar férias pendentes: {e}")
+
+            st.markdown("---")
+            st.markdown("#### 2. Registos de Ponto Hoje")
+            try:
+                res_ponto_hoje = supabase.table("picagens").select("*").eq("data", hoje_str).execute()
+                if res_ponto_hoje.data:
+                    df_p = pd.DataFrame(res_ponto_hoje.data)
+                    cols_ponto = [c for c in ["username", "hora_entrada", "hora_saida_almoco", "hora_entrada_almoco", "hora_saida"] if c in df_p.columns]
+                    st.dataframe(df_p[cols_ponto], use_container_width=True)
+                else:
+                    st.info("Ainda ninguém registou ponto hoje.")
+            except Exception as e:
+                st.error(f"Erro ao carregar registos de ponto do dia: {e}")
