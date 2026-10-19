@@ -1,4 +1,5 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+import calendar
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
@@ -7,11 +8,11 @@ from supabase import create_client, Client
 st.set_page_config(
     page_title="Gestão e Operações | Digital Solutions",
     page_icon="⚙️",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Estilização CSS minimalista e moderna
+# Estilização CSS minimalista e moderna com realce de cores
 st.markdown("""
     <style>
     .main {
@@ -33,12 +34,36 @@ st.markdown("""
         background-color: #333333;
         color: white;
     }
+    .card-pendente {
+        background: #fffbe6;
+        padding: 18px;
+        border-radius: 12px;
+        border-left: 5px solid #faad14;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .card-aprovado {
+        background: #f6ffed;
+        padding: 18px;
+        border-radius: 12px;
+        border-left: 5px solid #52c41a;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .card-rejeitado {
+        background: #fff2f0;
+        padding: 18px;
+        border-radius: 12px;
+        border-left: 5px solid #ff4d4f;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
     .card-box {
         background: white;
-        padding: 20px;
+        padding: 18px;
         border-radius: 12px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.04);
-        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        margin-bottom: 15px;
         border: 1px solid #e5e5ea;
     }
     </style>
@@ -101,7 +126,7 @@ else:
     c_user, c_logout = st.columns([3, 1])
     with c_user:
         perfil_txt = "Admin Principal" if st.session_state.is_admin else "Colaborador"
-        st.markdown(f"👋 **Bem-vindo(a), {st.session_state.nome}** ({perfil_txt})")
+        st.markdown(f"👋 **Bem-vindo(a), {st.session_state.nome}** (`{st.session_state.username}` — {perfil_txt})")
     with c_logout:
         if st.button("Sair", key="btn_logout_main"):
             st.session_state.logged_in = False
@@ -110,6 +135,61 @@ else:
     st.markdown("---")
 
     hoje_iso = date.today().isoformat()
+
+    # =========================================================================
+    # FUNÇÃO AUXILIAR: GERAR GRELHA / CALENDÁRIO MENSAL DE AUSÊNCIAS
+    # =========================================================================
+    def render_calendario_ausencias(res_ferias):
+        st.markdown("#### 📅 Calendário / Grelha Mensal de Ausências")
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            ano_sel = st.selectbox("Ano", [2026, 2027], index=0)
+        with col_m2:
+            mes_sel = st.selectbox("Mês", list(range(1, 13)), index=date.today().month - 1)
+
+        num_dias = calendar.monthrange(ano_sel, mes_sel)[1]
+        dias_mes = [date(ano_sel, mes_sel, d) for d in range(1, num_dias + 1)]
+
+        colabs = set()
+        ferias_validas = []
+        if res_ferias:
+            for f in res_ferias:
+                user = f.get("username", "Desconhecido")
+                colabs.add(user)
+                try:
+                    dt_i = datetime.strptime(f.get("data_inicio"), "%Y-%m-%d").date()
+                    dt_f = datetime.strptime(f.get("data_fim"), "%Y-%m-%d").date()
+                    est = f.get("estado", "Pendente") or "Pendente"
+                    tipo = f.get("tipo", "Ausência") or "Ausência"
+                    ferias_validas.append({"user": user, "ini": dt_i, "fim": dt_f, "estado": est, "tipo": tipo})
+                except Exception:
+                    pass
+
+        if not colabs:
+            st.info("Nenhuma ausência registada para construir a grelha.")
+            return
+
+        cols_df = ["Colaborador"] + [f"{d.day:02d}/{d.month:02d}" for d in dias_mes]
+        matrix_data = []
+
+        for c in sorted(colabs):
+            row = [c]
+            for d in dias_mes:
+                status_dia = "🟢 Presente"
+                for f in ferias_validas:
+                    if f["user"] == c and f["ini"] <= d <= f["fim"]:
+                        if f["estado"] == "Aprovado":
+                            status_dia = f"🏖️ {f['tipo']} (Aprovado)"
+                        elif f["estado"] == "Pendente":
+                            status_dia = f"🟡 {f['tipo']} (Pendente)"
+                        elif f["estado"] == "Rejeitado":
+                            status_dia = "🔴 Rejeitado"
+                        break
+                row.append(status_dia)
+            matrix_data.append(row)
+
+        df_grid = pd.DataFrame(matrix_data, columns=cols_df)
+        st.dataframe(df_grid, use_container_width=True)
 
     # =========================================================================
     # VISÃO DO COLABORADOR
@@ -206,11 +286,10 @@ else:
             st.markdown("---")
             st.markdown("### Os Seus Registos Recentes")
             try:
-                res_meus_reg = supabase.table("projetos_horas").select("*").eq("username", st.session_state.username).order("data", desc=True).limit(10).execute()
+                res_meus_reg = supabase.table("projetos_horas").select("*").eq("username", st.session_state.username).limit(10).execute()
                 if res_meus_reg.data:
                     df_h = pd.DataFrame(res_meus_reg.data)
-                    cols_to_show = [c for c in ["data", "horas_dedicadas", "descricao"] if c in df_h.columns]
-                    st.dataframe(df_h[cols_to_show], use_container_width=True)
+                    st.dataframe(df_h, use_container_width=True)
                 else:
                     st.info("Nenhum registo de horas encontrado.")
             except Exception as e:
@@ -251,27 +330,11 @@ else:
                             st.error(f"Erro ao submeter pedido: {e}")
 
             st.markdown("---")
-            st.markdown("### Histórico e Transparência da Equipa")
             try:
-                res_ferias_all = supabase.table("ferias").select("*").execute()
-                if res_ferias_all.data:
-                    for f in res_ferias_all.data:
-                        f_user = f.get('username', '')
-                        f_tipo = f.get('tipo', '')
-                        f_ini = f.get('data_inicio', '')
-                        f_fim = f.get('data_fim', '')
-                        f_est = f.get('estado', 'Pendente')
-                        cor_est = "🟡" if f_est == "Pendente" else ("🟢" if f_est == "Aprovado" else "🔴")
-
-                        st.markdown(f"""
-                            <div class="card-box" style="padding:12px 15px; margin-bottom:10px;">
-                                <b>{f_user}</b> — {f_tipo} | De: {f_ini} até {f_fim} | <b>Estado:</b> {cor_est} {f_est}
-                            </div>
-                        """, unsafe_allow_html=True)
-                else:
-                    st.info("Sem registos de férias na equipa.")
+                res_f_all = supabase.table("ferias").select("*").execute()
+                render_calendario_ausencias(res_f_all.data if res_f_all.data else [])
             except Exception as e:
-                st.error(f"Erro ao carregar férias: {e}")
+                st.error(f"Erro ao carregar calendário: {e}")
 
     # =========================================================================
     # VISÃO DO ADMINISTRADOR
@@ -295,7 +358,7 @@ else:
 
                         cols_ed = st.columns([2, 2, 2, 1])
                         with cols_ed[0]:
-                            st.write(f"**Colab:** {p_user}")
+                            st.write(f"**Colab:** `{p_user}`")
                         with cols_ed[1]:
                             novo_tipo = st.selectbox("Tipo", ["entrada", "saida"], index=0 if p_tipo=="entrada" else 1, key=f"pt_tipo_{p_id}")
                         with cols_ed[2]:
@@ -316,17 +379,17 @@ else:
         with tabs[1]:
             st.markdown("### Supervisão e Edição de Horas em Projetos")
             try:
-                res_all_h = supabase.table("projetos_horas").select("*").order("data", desc=True).limit(50).execute()
+                res_all_h = supabase.table("projetos_horas").select("*").limit(50).execute()
                 if res_all_h.data:
                     for h in res_all_h.data:
                         h_id = h.get("id")
-                        h_user = h.get("username")
-                        h_horas = h.get("horas_dedicadas")
-                        h_desc = h.get("descricao")
+                        h_user = h.get("username", "Colaborador")
+                        h_horas = h.get("horas_dedicadas", 8.0) or 8.0
+                        h_desc = h.get("descricao", "") or ""
 
                         cols_h = st.columns([2, 1, 3, 1])
                         with cols_h[0]:
-                            st.write(f"**{h_user}** ({h.get('data')})")
+                            st.write(f"**`{h_user}`**")
                         with cols_h[1]:
                             novas_horas = st.number_input("Horas", value=float(h_horas), step=0.5, key=f"h_val_{h_id}")
                         with cols_h[2]:
@@ -345,44 +408,78 @@ else:
 
         # --- ADMIN TAB 3: GESTÃO DE FÉRIAS E MAPA MENSAL ---
         with tabs[2]:
-            st.markdown("### Aprovação e Edição de Férias")
+            st.markdown("### Aprovação e Edição de Pedidos de Férias")
             try:
-                res_ferias_all = supabase.table("ferias").select("*").order("created_at", desc=True).execute()
-                if res_ferias_all.data:
-                    for f in res_ferias_all.data:
+                res_ferias_all = supabase.table("ferias").select("*").execute()
+                ferias_list = res_ferias_all.data if res_ferias_all.data else []
+
+                # Separar pendentes
+                pendentes = [f for f in ferias_list if f.get("estado", "Pendente") == "Pendente"]
+                outros = [f for f in ferias_list if f.get("estado", "Pendente") != "Pendente"]
+
+                if pendentes:
+                    st.markdown("#### 🟡 Pedidos A Aguardar A Tua Aprovação")
+                    for f in pendentes:
                         f_id = f.get("id")
-                        f_user = f.get("username")
-                        f_tipo = f.get("tipo")
-                        f_est = f.get("estado")
+                        f_user = f.get("username", "Desconhecido")
+                        f_tipo = f.get("tipo", "Férias")
                         f_ini = f.get("data_inicio")
                         f_fim = f.get("data_fim")
+                        f_obs = f.get("observacoes", "") or "Sem notas"
 
-                        st.markdown(f"**{f_user}** | {f_tipo} | De: {f_ini} até {f_fim} | **Estado Atual:** {f_est}")
-                        
+                        st.markdown(f"""
+                            <div class="card-pendente">
+                                <b>Colaborador:</b> <code>{f_user}</code> | <b>Tipo:</b> {f_tipo}<br>
+                                <b>Período:</b> {f_ini} até {f_fim}<br>
+                                <i>Nota: {f_obs}</i>
+                            </div>
+                        """, unsafe_allow_html=True)
+
                         c_f1, c_f2, c_f3 = st.columns(3)
                         with c_f1:
                             if st.button(f"Aprovar #{f_id}", key=f"adm_ap_{f_id}"):
                                 supabase.table("ferias").update({"estado": "Aprovado"}).eq("id", f_id).execute()
+                                st.success("Aprovado com sucesso!")
                                 st.rerun()
                         with c_f2:
                             if st.button(f"Rejeitar #{f_id}", key=f"adm_rej_{f_id}"):
                                 supabase.table("ferias").update({"estado": "Rejeitado"}).eq("id", f_id).execute()
+                                st.warning("Rejeitado!")
                                 st.rerun()
                         with c_f3:
                             if st.button(f"Apagar #{f_id}", key=f"adm_del_{f_id}"):
                                 supabase.table("ferias").delete().eq("id", f_id).execute()
                                 st.rerun()
                         st.markdown("---")
-                else:
-                    st.info("Não existem pedidos de férias.")
+
+                if outros:
+                    st.markdown("#### 📋 Pedidos Já Processados")
+                    for f in outros:
+                        f_id = f.get("id")
+                        f_user = f.get("username", "Desconhecido")
+                        f_tipo = f.get("tipo", "Férias")
+                        f_est = f.get("estado", "Aprovado")
+                        f_ini = f.get("data_inicio")
+                        f_fim = f.get("data_fim")
+                        css_class = "card-aprovado" if f_est == "Aprovado" else "card-rejeitado"
+
+                        st.markdown(f"""
+                            <div class="{css_class}">
+                                <b>Colaborador:</b> <code>{f_user}</code> | <b>Tipo:</b> {f_tipo} | <b>Estado:</b> {f_est}<br>
+                                <b>Período:</b> {f_ini} até {f_fim}
+                            </div>
+                        """, unsafe_allow_html=True)
+                        st.markdown("---")
+
+                if not ferias_list:
+                    st.info("Não existem pedidos de férias registados.")
+
             except Exception as e:
                 st.error(f"Erro ao carregar pedidos de férias: {e}")
 
-            st.markdown("### 📊 Mapa Mensal de Ausências da Equipa")
+            st.markdown("---")
+            # Renderizar o calendário/grelha mensal para o Admin
             try:
-                if res_ferias_all.data:
-                    df_f = pd.DataFrame(res_ferias_all.data)
-                    if not df_f.empty:
-                        st.dataframe(df_f[["username", "tipo", "data_inicio", "data_fim", "dias_uteis", "estado", "observacoes"]], use_container_width=True)
+                render_calendario_ausencias(ferias_list)
             except Exception as e:
-                st.error(f"Erro ao gerar mapa mensal: {e}")
+                st.error(f"Erro ao gerar grelha mensal: {e}")
