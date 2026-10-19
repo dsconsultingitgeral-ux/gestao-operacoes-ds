@@ -112,12 +112,11 @@ else:
 
     hoje_iso = date.today().isoformat()
 
-    # --- TAB 1: PICAGEM DE PONTO (ESTRUTURA ORIGINAL: TIPO + DATA_HORA) ---
+    # --- TAB 1: PICAGEM DE PONTO ---
     with tabs[0]:
         st.markdown("### Picagem de Ponto Diária")
         st.write(f"**Data:** {date.today().strftime('%d/%m/%Y')}")
 
-        # Registar nova picagem
         def registar_ponto(tipo_evento):
             try:
                 agora_iso = datetime.now().isoformat()
@@ -153,7 +152,6 @@ else:
         st.markdown("#### Os Seus Registos do Dia")
         
         try:
-            # Buscar registos do utilizador atual para o dia de hoje
             res_hoje = supabase.table("picagens").select("*").eq("username", st.session_state.username).gte("data_hora", f"{hoje_iso}T00:00:00").order("data_hora", desc=True).execute()
             if res_hoje.data:
                 for reg in res_hoje.data:
@@ -262,4 +260,69 @@ else:
                     f_fim = f.get('data_fim', '')
                     f_dias = f.get('dias_uteis', '')
                     f_est = f.get('estado', 'Pendente')
-                    f_obs = f.
+                    f_obs = f.get('observacoes', '') or ''
+                    cor_est = "🟡" if f_est == "Pendente" else ("🟢" if f_est == "Aprovado" else "🔴")
+
+                    st.markdown(f"""
+                        <div class="card-box">
+                            <b>Tipo:</b> {f_tipo} | <b>De:</b> {f_ini} <b>Até:</b> {f_fim} ({f_dias} dias)<br>
+                            <b>Estado:</b> {cor_est} {f_est} <br>
+                            <small><i>{f_obs}</i></small>
+                        </div>
+                    """, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Erro ao carregar histórico de férias: {e}")
+
+    # --- TAB 4: PAINEL ADMIN ---
+    if st.session_state.is_admin:
+        with tabs[3]:
+            st.markdown("### Painel Geral de Administração")
+            
+            st.markdown("#### 1. Aprovação de Férias Pendentes")
+            try:
+                res_ferias_pend = supabase.table("ferias").select("*").eq("estado", "Pendente").execute()
+                
+                if not res_ferias_pend.data:
+                    st.info("Não existem pedidos de férias pendentes de aprovação.")
+                else:
+                    for fp in res_ferias_pend.data:
+                        fp_id = fp.get('id', '')
+                        fp_user = fp.get('username', '')
+                        fp_tipo = fp.get('tipo', '')
+                        fp_ini = fp.get('data_inicio', '')
+                        fp_fim = fp.get('data_fim', '')
+                        fp_dias = fp.get('dias_uteis', '')
+
+                        st.markdown(f"""
+                            <div class="card-box">
+                                <b>Colaborador:</b> {fp_user} | <b>Tipo:</b> {fp_tipo}<br>
+                                <b>Período:</b> {fp_ini} a {fp_fim} ({fp_dias} dias)
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
+                        col_ap1, col_ap2 = st.columns(2)
+                        with col_ap1:
+                            if st.button(f"Aprovar #{fp_id}", key=f"ap_{fp_id}"):
+                                supabase.table("ferias").update({"estado": "Aprovado"}).eq("id", fp_id).execute()
+                                st.success("Pedido aprovado!")
+                                st.rerun()
+                        with col_ap2:
+                            if st.button(f"Rejeitar #{fp_id}", key=f"rej_{fp_id}"):
+                                supabase.table("ferias").update({"estado": "Rejeitado"}).eq("id", fp_id).execute()
+                                st.warning("Pedido rejeitado.")
+                                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao carregar férias pendentes: {e}")
+
+            st.markdown("---")
+            st.markdown("#### 2. Registos Globais de Ponto de Todos os Colaboradores")
+            try:
+                res_ponto_hoje = supabase.table("picagens").select("*").gte("data_hora", f"{hoje_iso}T00:00:00").order("data_hora", desc=True).execute()
+                if res_ponto_hoje.data:
+                    df_p = pd.DataFrame(res_ponto_hoje.data)
+                    cols_ponto = [c for c in ["username", "tipo", "data_hora"] if c in df_p.columns]
+                    st.dataframe(df_p[cols_ponto], use_container_width=True)
+                else:
+                    st.info("Nenhum colaborador efetuou picagens de ponto hoje.")
+            except Exception as e:
+                st.error(f"Erro ao carregar registos globais de ponto: {e}")
