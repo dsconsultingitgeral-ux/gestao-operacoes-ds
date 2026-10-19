@@ -346,42 +346,95 @@ else:
     else:
         tabs = st.tabs(["🕒 Gestão de Picagens", "📁 Gestão de Projetos & Horas", "🏖️ Gestão & Mapa de Férias"])
 
-        # --- ADMIN TAB 1: GESTÃO DE PICAGENS ---
+        # --- ADMIN TAB 1: GESTÃO DE PICAGENS COM FILTROS ---
         with tabs[0]:
             st.markdown("### Painel de Supervisão e Edição de Picagens")
-            st.info("Pode editar as picagens dos colaboradores e clicar em 'Guardar Alterações' no final do formulário.")
-            
+            st.info("Filtre as picagens por colaborador, tipo e período. Edite os resultados e guarde as alterações no final.")
+
             try:
-                res_all_p = supabase.table("picagens").select("*").order("data_hora", desc=True).limit(30).execute()
+                res_all_p = supabase.table("picagens").select("*").order("data_hora", desc=True).execute()
                 picagens_data = res_all_p.data if res_all_p.data else []
 
-                if picagens_data:
-                    with st.form("form_edit_picagens"):
-                        novas_picagens = {}
-                        for p in picagens_data:
-                            p_id = p.get("id")
-                            p_user = p.get("username")
-                            p_tipo = p.get("tipo")
-                            p_dh = p.get("data_hora")
-
-                            cols_ed = st.columns([2, 2, 3])
-                            with cols_ed[0]:
-                                st.write(f"**Colaborador:** `{p_user}`")
-                            with cols_ed[1]:
-                                t_sel = st.selectbox(f"Tipo (#{p_id})", ["entrada", "saida"], index=0 if p_tipo=="entrada" else 1, key=f"pt_tipo_{p_id}")
-                            with cols_ed[2]:
-                                dh_val = st.text_input(f"Data/Hora ISO (#{p_id})", value=str(p_dh), key=f"pt_dh_{p_id}")
-
-                            novas_picagens[p_id] = {"tipo": t_sel, "data_hora": dh_val}
-                            st.markdown("---")
-
-                        if st.form_submit_button("💾 Guardar Alterações nas Picagens"):
-                            for pid, pdata in novas_picagens.items():
-                                supabase.table("picagens").update(pdata).eq("id", pid).execute()
-                            st.success("Picagens atualizadas com sucesso!")
-                            st.rerun()
-                else:
+                if not picagens_data:
                     st.info("Não existem picagens registadas.")
+                else:
+                    df_p = pd.DataFrame(picagens_data)
+                    if "username" not in df_p.columns:
+                        df_p["username"] = "Desconhecido"
+                    if "tipo" not in df_p.columns:
+                        df_p["tipo"] = ""
+                    if "data_hora" not in df_p.columns:
+                        df_p["data_hora"] = None
+
+                    df_p["username"] = df_p["username"].fillna("Desconhecido").astype(str)
+                    df_p["tipo"] = df_p["tipo"].fillna("").astype(str).str.lower()
+                    df_p["data_hora_dt"] = pd.to_datetime(df_p["data_hora"], errors="coerce", utc=True)
+                    df_p["data_local"] = df_p["data_hora_dt"].dt.tz_convert(None).dt.date
+
+                    st.markdown("#### 🔎 Filtrar picagens")
+                    f1, f2, f3 = st.columns(3)
+                    with f1:
+                        users_p = sorted(df_p["username"].unique().tolist())
+                        filtro_user_p = st.selectbox("Colaborador", ["Todos"] + users_p, key="picagens_filtro_user")
+                    with f2:
+                        filtro_tipo_p = st.selectbox("Tipo de picagem", ["Todos", "entrada", "saida"], key="picagens_filtro_tipo")
+                    with f3:
+                        filtro_periodo_p = st.selectbox("Período", ["Este mês", "Mês anterior", "Últimos 7 dias", "Todo o histórico"], key="picagens_filtro_periodo")
+
+                    df_p_filtrado = df_p.copy()
+                    if filtro_user_p != "Todos":
+                        df_p_filtrado = df_p_filtrado[df_p_filtrado["username"] == filtro_user_p]
+                    if filtro_tipo_p != "Todos":
+                        df_p_filtrado = df_p_filtrado[df_p_filtrado["tipo"] == filtro_tipo_p]
+
+                    hoje_p = date.today()
+                    inicio_mes_p = hoje_p.replace(day=1)
+                    if filtro_periodo_p == "Este mês":
+                        df_p_filtrado = df_p_filtrado[df_p_filtrado["data_local"].apply(lambda d: pd.notna(d) and inicio_mes_p <= d <= hoje_p)]
+                    elif filtro_periodo_p == "Mês anterior":
+                        fim_mes_ant_p = inicio_mes_p - timedelta(days=1)
+                        inicio_mes_ant_p = fim_mes_ant_p.replace(day=1)
+                        df_p_filtrado = df_p_filtrado[df_p_filtrado["data_local"].apply(lambda d: pd.notna(d) and inicio_mes_ant_p <= d <= fim_mes_ant_p)]
+                    elif filtro_periodo_p == "Últimos 7 dias":
+                        inicio_7_p = hoje_p - timedelta(days=6)
+                        df_p_filtrado = df_p_filtrado[df_p_filtrado["data_local"].apply(lambda d: pd.notna(d) and inicio_7_p <= d <= hoje_p)]
+
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Picagens encontradas", len(df_p_filtrado))
+                    m2.metric("Entradas", int((df_p_filtrado["tipo"] == "entrada").sum()))
+                    m3.metric("Saídas", int((df_p_filtrado["tipo"] == "saida").sum()))
+                    st.caption(f"A mostrar {len(df_p_filtrado)} de {len(df_p)} picagem(ns).")
+
+                    if df_p_filtrado.empty:
+                        st.warning("Não existem picagens para os filtros selecionados.")
+                    else:
+                        with st.form("form_edit_picagens"):
+                            novas_picagens = {}
+                            for _, p in df_p_filtrado.sort_values("data_hora_dt", ascending=False, na_position="last").iterrows():
+                                p_id = p.get("id")
+                                p_user = p.get("username", "Desconhecido")
+                                p_tipo = p.get("tipo", "entrada")
+                                p_dh = p.get("data_hora", "")
+
+                                st.markdown(f"**Picagem #{p_id}** · Colaborador: `{p_user}`")
+                                cols_ed = st.columns([1, 3])
+                                with cols_ed[0]:
+                                    opcoes_tipo = ["entrada", "saida"]
+                                    tipo_index = opcoes_tipo.index(p_tipo) if p_tipo in opcoes_tipo else 0
+                                    t_sel = st.selectbox("Tipo", opcoes_tipo, index=tipo_index, key=f"pt_tipo_{p_id}")
+                                with cols_ed[1]:
+                                    dh_val = st.text_input("Data/Hora (ISO)", value=str(p_dh), key=f"pt_dh_{p_id}")
+                                novas_picagens[p_id] = {"tipo": t_sel, "data_hora": dh_val}
+                                st.divider()
+
+                            if st.form_submit_button("💾 Guardar alterações nas picagens"):
+                                try:
+                                    for pid, pdata in novas_picagens.items():
+                                        supabase.table("picagens").update(pdata).eq("id", pid).execute()
+                                    st.success("Picagens atualizadas com sucesso!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro ao guardar alterações nas picagens: {e}")
             except Exception as e:
                 st.error(f"Erro ao carregar picagens: {e}")
 
