@@ -139,57 +139,165 @@ else:
     # =========================================================================
     # FUNÇÃO AUXILIAR: CALENDÁRIO / GRELHA MENSAL DE AUSÊNCIAS
     # =========================================================================
+    def _data_pascoa(ano):
+        """Calcula a data da Páscoa (calendário gregoriano), sem dependências externas."""
+        a = ano % 19
+        b = ano // 100
+        c = ano % 100
+        d = b // 4
+        e = b % 4
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i = c // 4
+        k = c % 4
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        mes = (h + l - 7 * m + 114) // 31
+        dia = ((h + l - 7 * m + 114) % 31) + 1
+        return date(ano, mes, dia)
+
+    def _feriados_nacionais(ano, pais):
+        """Feriados nacionais; não inclui feriados regionais/municipais nem tolerâncias facultativas."""
+        pascoa = _data_pascoa(ano)
+        feriados = {}
+
+        if pais in ("Portugal", "Portugal e Brasil"):
+            fixos_pt = {
+                (1, 1): "🇵🇹 Ano Novo",
+                (4, 25): "🇵🇹 Dia da Liberdade",
+                (5, 1): "🇵🇹 Dia do Trabalhador",
+                (6, 10): "🇵🇹 Dia de Portugal",
+                (8, 15): "🇵🇹 Assunção de Nossa Senhora",
+                (10, 5): "🇵🇹 Implantação da República",
+                (11, 1): "🇵🇹 Dia de Todos os Santos",
+                (12, 1): "🇵🇹 Restauração da Independência",
+                (12, 8): "🇵🇹 Imaculada Conceição",
+                (12, 25): "🇵🇹 Natal",
+            }
+            for (mes, dia), nome in fixos_pt.items():
+                feriados[date(ano, mes, dia)] = nome
+            feriados[pascoa] = "🇵🇹 Domingo de Páscoa"
+            feriados[pascoa - timedelta(days=2)] = "🇵🇹 Sexta-feira Santa"
+            feriados[pascoa + timedelta(days=60)] = "🇵🇹 Corpo de Deus"
+
+        if pais in ("Brasil", "Portugal e Brasil"):
+            fixos_br = {
+                (1, 1): "🇧🇷 Confraternização Universal",
+                (4, 21): "🇧🇷 Tiradentes",
+                (5, 1): "🇧🇷 Dia do Trabalhador",
+                (9, 7): "🇧🇷 Independência do Brasil",
+                (10, 12): "🇧🇷 Nossa Senhora Aparecida",
+                (11, 2): "🇧🇷 Finados",
+                (11, 15): "🇧🇷 Proclamação da República",
+                (11, 20): "🇧🇷 Dia da Consciência Negra",
+                (12, 25): "🇧🇷 Natal",
+            }
+            for (mes, dia), nome in fixos_br.items():
+                feriados[date(ano, mes, dia)] = nome
+            feriados[pascoa - timedelta(days=2)] = (
+                feriados.get(pascoa - timedelta(days=2), "") + " / 🇧🇷 Paixão de Cristo"
+            ).strip(" /")
+
+        return feriados
+
     def render_calendario_ausencias(res_ferias):
         st.markdown("#### 📅 Calendário / Grelha Mensal de Ausências")
-        col_m1, col_m2 = st.columns(2)
+        hoje = date.today()
+        anos_disponiveis = list(range(hoje.year, 2127))
+        col_m1, col_m2, col_pais = st.columns([1, 1, 1])
         with col_m1:
-            ano_sel = st.selectbox("Ano", [2026, 2027], index=0)
+            ano_sel = st.selectbox(
+                "Ano", anos_disponiveis, index=0, key="cal_ausencias_ano"
+            )
         with col_m2:
-            mes_sel = st.selectbox("Mês", list(range(1, 13)), index=date.today().month - 1)
+            mes_sel = st.selectbox(
+                "Mês", list(range(1, 13)), index=hoje.month - 1, key="cal_ausencias_mes"
+            )
+        with col_pais:
+            pais_sel = st.selectbox(
+                "Feriados nacionais", ["Portugal", "Brasil", "Portugal e Brasil"],
+                index=0, key="cal_ausencias_pais"
+            )
 
         num_dias = calendar.monthrange(ano_sel, mes_sel)[1]
         dias_mes = [date(ano_sel, mes_sel, d) for d in range(1, num_dias + 1)]
+        feriados = _feriados_nacionais(ano_sel, pais_sel)
 
         colabs = set()
         ferias_validas = []
-        if res_ferias:
-            for f in res_ferias:
-                user = f.get("username", "Desconhecido")
-                colabs.add(user)
-                try:
-                    dt_i = datetime.strptime(f.get("data_inicio"), "%Y-%m-%d").date()
-                    dt_f = datetime.strptime(f.get("data_fim"), "%Y-%m-%d").date()
-                    est = f.get("estado", "Pendente") or "Pendente"
-                    tipo = f.get("tipo", "Ausência") or "Ausência"
-                    ferias_validas.append({"user": user, "ini": dt_i, "fim": dt_f, "estado": est, "tipo": tipo})
-                except Exception:
-                    pass
+        for f in (res_ferias or []):
+            user = f.get("username", "Desconhecido")
+            colabs.add(user)
+            try:
+                dt_i = datetime.strptime(str(f.get("data_inicio")), "%Y-%m-%d").date()
+                dt_f = datetime.strptime(str(f.get("data_fim")), "%Y-%m-%d").date()
+                est = f.get("estado", "Pendente") or "Pendente"
+                tipo = f.get("tipo", "Ausência") or "Ausência"
+                ferias_validas.append({
+                    "user": user, "ini": dt_i, "fim": dt_f,
+                    "estado": est, "tipo": tipo
+                })
+            except (TypeError, ValueError):
+                continue
 
-        if not colabs:
-            st.info("Nenhuma ausência registada para construir a grelha.")
-            return
+        st.caption("Legenda: 🟦 fim de semana · 🟨 feriado nacional · 🏖️ ausência aprovada · 🟡 pendente · 🔴 rejeitada")
+        st.caption("Os feriados apresentados são nacionais. Feriados regionais/municipais e pontos facultativos podem variar.")
 
-        cols_df = ["Colaborador"] + [f"{d.day:02d}/{d.month:02d}" for d in dias_mes]
+        cols_df = ["Colaborador"] + [
+            f"{d.day:02d}/{d.month:02d}" for d in dias_mes
+        ]
         matrix_data = []
-
         for c in sorted(colabs):
             row = [c]
             for d in dias_mes:
-                status_dia = "🟢 Presente"
+                ausencia = None
                 for f in ferias_validas:
                     if f["user"] == c and f["ini"] <= d <= f["fim"]:
-                        if f["estado"] == "Aprovado":
-                            status_dia = f"🏖️ {f['tipo']} (Aprovado)"
-                        elif f["estado"] == "Pendente":
-                            status_dia = f"🟡 {f['tipo']} (Pendente)"
-                        elif f["estado"] == "Rejeitado":
-                            status_dia = "🔴 Rejeitado"
+                        if f["estado"].casefold() == "aprovado":
+                            ausencia = f"🏖️ {f['tipo']}"
+                        elif f["estado"].casefold() == "pendente":
+                            ausencia = f"🟡 {f['tipo']} (Pendente)"
+                        elif f["estado"].casefold() == "rejeitado":
+                            ausencia = "🔴 Rejeitado"
                         break
+
+                if ausencia:
+                    status_dia = ausencia
+                elif d in feriados:
+                    status_dia = f"🟨 {feriados[d]}"
+                elif d.weekday() >= 5:
+                    status_dia = "🟦 Fim de semana"
+                else:
+                    status_dia = "🟢 Dia útil"
                 row.append(status_dia)
             matrix_data.append(row)
 
+        if not matrix_data:
+            st.info("Ainda não existem colaboradores com pedidos de ausência. Os fins de semana e feriados são calculados automaticamente quando houver colaboradores registados.")
+            return
+
         df_grid = pd.DataFrame(matrix_data, columns=cols_df)
-        st.dataframe(df_grid, use_container_width=True)
+
+        def pintar_calendario(valor):
+            texto = str(valor)
+            if "Fim de semana" in texto:
+                return "background-color: #dbeafe; color: #1e40af"
+            if "🟨" in texto:
+                return "background-color: #fef3c7; color: #92400e"
+            if "Aprovado" in texto or "🏖️" in texto:
+                return "background-color: #dcfce7; color: #166534"
+            if "Pendente" in texto or "🟡" in texto:
+                return "background-color: #fef9c3; color: #854d0e"
+            if "Rejeitado" in texto or "🔴" in texto:
+                return "background-color: #fee2e2; color: #991b1b"
+            return ""
+
+        st.dataframe(
+            df_grid.style.map(pintar_calendario),
+            use_container_width=True,
+            height=min(700, 100 + 35 * len(df_grid))
+        )
 
     # =========================================================================
     # VISÃO DO COLABORADOR
